@@ -1,0 +1,89 @@
+﻿@model IEnumerable<IpBlockerNetcore.Models.Domain.Entry>
+
+@{
+    ViewData["Title"] = "Index";
+}
+
+<h1>Index</h1>
+
+<p>
+    <a asp-action="Create">Create New</a>
+</p>
+<table class="table">
+    <thead>
+        <tr>
+            <th>
+                @Html.DisplayNameFor(model => model.rowNumber)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.timestamp)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.clientIpAddress)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.protocol)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.responseType)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.rcode)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.qname)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.qtype)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.qclass)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.answer)
+            </th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+@foreach (var item in Model) {
+        <tr>
+            <td>
+                @Html.DisplayFor(modelItem => item.rowNumber)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.timestamp)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.clientIpAddress)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.protocol)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.responseType)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.rcode)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.qname)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.qtype)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.qclass)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.answer)
+            </td>
+            <td>
+                <a asp-action="Edit" asp-route-id="@item.ID">Edit</a> |
+                <a asp-action="Details" asp-route-id="@item.ID">Details</a> |
+                <a asp-action="Delete" asp-route-id="@item.ID">Delete</a>
+            </td>
+        </tr>
+}
+    </tbody>
+</table>
