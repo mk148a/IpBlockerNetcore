@@ -20,6 +20,8 @@ using Microsoft.EntityFrameworkCore.Internal;
 using static Azure.Core.HttpHeader;
 using System.Linq;
 using IpBlockerNetcore.Services;
+using Microsoft.AspNetCore.Mvc.Rendering;
+using System.Text;
 
 namespace IpBlockerNetcore.Code
 {
@@ -89,9 +91,9 @@ namespace IpBlockerNetcore.Code
             await Console.Out.WriteLineAsync("FirewallAddJob is executing. Result: " + result);
         }
 
-        public async Task AddToNewFirewallRule(string ip, string durum)
+        public async Task AddToNewFirewallRule(string ip, string durum, IpBlockerNetcoreContext context)
         {
-            var _context = await _contextFactory.CreateDbContextAsync();
+          
             var rules = FirewallManager.Instance.Rules.Where(o => 
             o.Direction == FirewallDirection.Inbound && 
             o.Name.StartsWith("BlockAbuseIp"));
@@ -123,17 +125,16 @@ namespace IpBlockerNetcore.Code
                 Date = DateTime.Now
             };
 
-            await _context.BanLog.AddAsync(banlog);
-            await _context.SaveChangesAsync();
+            await context.BanLog.AddAsync(banlog);
+            await context.SaveChangesAsync();
 
             FirewallManager.Instance.Rules.Add(newRule);
         }
 
-        public async Task AddToFirewall(string ip, string durum = "")
+        public async Task AddToFirewall(string ip, string durum, IpBlockerNetcoreContext context)
         {
             try
             {
-                var _context = await _contextFactory.CreateDbContextAsync();
                 var rules = FirewallManager.Instance.Rules.Where(o =>
                     o.Direction == FirewallDirection.Inbound &&
                     o.Name.StartsWith("BlockAbuseIp")
@@ -143,7 +144,6 @@ namespace IpBlockerNetcore.Code
                 {
                     IAddress newIp = SingleIP.Parse(ip);
                     bool isAlreadyAdded = rules.Any(x => x.RemoteAddresses.Any(a => a.ToString() == newIp.ToString()));
-
 
                     if (!isAlreadyAdded)
                     {
@@ -163,15 +163,14 @@ namespace IpBlockerNetcore.Code
                                     Date = DateTime.Now
                                 };
 
-                                await _context.BanLog.AddAsync(banlog);
-                                await _context.SaveChangesAsync();
+                                await context.BanLog.AddAsync(banlog);
+                                await context.SaveChangesAsync();
                             }
                             else
                             {
-                                await AddToNewFirewallRule(ip, durum);
+                                await AddToNewFirewallRule(ip, durum, context);
                             }
                         }
-                     
                     }
                     else
                     {
@@ -180,7 +179,7 @@ namespace IpBlockerNetcore.Code
                 }
                 else
                 {
-                    await AddToNewFirewallRule(ip, durum);
+                    await AddToNewFirewallRule(ip, durum, context);
                 }
             }
             catch (Exception e)
@@ -188,18 +187,18 @@ namespace IpBlockerNetcore.Code
                 _logger.LogCritical(e, "Firewall kuralı eklenirken hata oluştu.");
             }
         }
-
         public async Task<string> GetAndScanScannableIpList()
         {
-            var _context = await _contextFactory.CreateDbContextAsync();
+            // Ana DbContext örneği oluştur
+            using var mainContext = await _contextFactory.CreateDbContextAsync();
 
             // WhiteList'teki IP'leri sil
-            var resultDelete = await _context.Database.ExecuteSqlRawAsync("EXEC DeleteScanIpByWhiteList");
-            await _context.SaveChangesAsync();
+            var resultDelete = await mainContext.Database.ExecuteSqlRawAsync("EXEC DeleteScanIpByWhiteList");
+            await mainContext.SaveChangesAsync();
 
-            var whiteListIps = _context.WhiteList.Select(x => x.IpAdresi).ToHashSet();
-            var blackListIps = _context.BlackList.Select(x => x.IpAdresi).ToHashSet();
-            var scanIps = _context.ScanIp.ToHashSet();
+            var whiteListIps = mainContext.WhiteList.Select(x => x.IpAdresi).ToHashSet();
+            var blackListIps = mainContext.BlackList.Select(x => x.IpAdresi).ToHashSet();
+            var scanIps = mainContext.ScanIp.ToHashSet();
 
             int sorguSayisi = 0;
             int apiKeyIndex = 0; // API anahtarı indeksi
@@ -219,28 +218,43 @@ namespace IpBlockerNetcore.Code
 
                     tasks.Add(Task.Run(async () =>
                     {
+                        // Her task için yeni bir DbContext örneği oluştur
+                        using var taskContext = await _contextFactory.CreateDbContextAsync();
+
                         try
                         {
                             string dataResult = await ScanIpAsync(scanIp.IpAdresi, apiKey);
+                            
                             if (!string.IsNullOrEmpty(dataResult))
                             {
                                 var parsedJson = JsonConvert.DeserializeObject<AbuseIpDb>(dataResult);
+                               
                                 sorguSayisi++;
-
-                                if ((bool)!parsedJson.Data.IsPublic)
+                                if (parsedJson == null)
                                 {
-                                    if (!whiteListIps.Contains(scanIp.IpAdresi))
-                                    {
-                                        await AddToWhiteList(scanIp);
-                                    }
+                                    Console.WriteLine(scanIp.IpAdresi + " ipsi için jsona çevirme null oldu");
+                                    taskContext.ScanIp.Remove(scanIp);
+                                    await taskContext.SaveChangesAsync();
                                 }
                                 else
                                 {
-                                    await HandlePublicIp(scanIp, parsedJson, whiteListIps, blackListIps);
+                                    if ((bool)!parsedJson.Data.IsPublic)
+                                    {
+                                        if (!whiteListIps.Contains(scanIp.IpAdresi))
+                                        {
+                                            await AddToWhiteList(scanIp, taskContext);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        await HandlePublicIp(scanIp, parsedJson, whiteListIps, blackListIps, taskContext);
+                                    }
                                 }
 
-                                processedIpsCount++; // İşlenen IP sayısını arttır
-                                CalculateProcessingSpeedAndETA(_context); // Hızı ve ETA'yı hesapla
+                              
+
+                                Interlocked.Increment(ref processedIpsCount); // İşlenen IP sayısını thread-safe olarak arttır
+                                CalculateProcessingSpeedAndETA(taskContext); // Hızı ve ETA'yı hesapla
                             }
                         }
                         catch (OperationCanceledException)
@@ -272,7 +286,6 @@ namespace IpBlockerNetcore.Code
 
         private void CalculateProcessingSpeedAndETA(IpBlockerNetcoreContext context)
         {
-
             // İşleme hızını her 10 saniyede bir hesapla
             if ((DateTime.UtcNow - lastCalculationTime).TotalSeconds >= 60)
             {
@@ -280,21 +293,20 @@ namespace IpBlockerNetcore.Code
                 int processingSpeed = (int)(processedIpsCount / (DateTime.UtcNow - lastCalculationTime).TotalMinutes); // Dakikada işlenen IP
 
                 // Hızı sıfırla ve zamanı güncelle
-                processedIpsCount = 0;
+                Interlocked.Exchange(ref processedIpsCount, 0);
                 lastCalculationTime = DateTime.UtcNow;
 
                 // Tahmini bitiş süresini hesapla
                 double estimatedMinutesRemaining = remainingIpsCount / (double)processingSpeed;
                 TimeSpan eta = TimeSpan.FromMinutes(estimatedMinutesRemaining);
 
-               
                 // Gün, saat ve dakika olarak biçimlendirme
                 int days = eta.Days;
                 int hours = eta.Hours;
                 int minutes = eta.Minutes;
 
                 _logger.LogInformation($"Dakikada işlenen IP: {processingSpeed}, Tahmini Bitiş Süresi: {days} gün, {hours} saat, {minutes} dakika.");
-                Console.WriteLine(DateTime.Now+"--"+ $"Dakikada işlenen IP: {processingSpeed}, Tahmini Bitiş Süresi: {days} gün, {hours} saat, {minutes} dakika." +Environment.NewLine+"Kalan Ip:"+remainingIpsCount +" adet");
+                Console.WriteLine(DateTime.Now + "--" + $"Dakikada işlenen IP: {processingSpeed}, Tahmini Bitiş Süresi: {days} gün, {hours} saat, {minutes} dakika." + Environment.NewLine + "Kalan Ip:" + remainingIpsCount + " adet");
             }
         }
         public async Task<string?> ScanIpAsync(string ip, string apiKey)
@@ -347,9 +359,8 @@ namespace IpBlockerNetcore.Code
             return null;
         }
 
-        private async Task AddToWhiteList(ScanIp scanIp)
+        private async Task AddToWhiteList(ScanIp scanIp, IpBlockerNetcoreContext context)
         {
-            var _context = await _contextFactory.CreateDbContextAsync();
             var newWhiteList = new WhiteList
             {
                 IpAdresi = scanIp.IpAdresi,
@@ -357,9 +368,9 @@ namespace IpBlockerNetcore.Code
                 Date = DateTime.Now
             };
 
-            await _context.WhiteList.AddAsync(newWhiteList);
-            _context.ScanIp.Remove(scanIp);
-            await _context.SaveChangesAsync();
+            await context.WhiteList.AddAsync(newWhiteList);
+            context.ScanIp.Remove(scanIp);
+            await context.SaveChangesAsync();
         }
         public async Task<bool> IsWhitelistedDomain(string domainName)
         {
@@ -373,20 +384,57 @@ namespace IpBlockerNetcore.Code
             }
             else return false;
         }
-        private async Task HandlePublicIp(ScanIp scanIp, AbuseIpDb parsedJson, HashSet<string> whiteListIps, HashSet<string> blackListIps)
+        private async Task HandlePublicIp(ScanIp scanIp, AbuseIpDb parsedJson, HashSet<string> whiteListIps, HashSet<string> blackListIps, IpBlockerNetcoreContext context)
         {
             try
             {
-
-           
-            var _context = await _contextFactory.CreateDbContextAsync();
-            var tehlikeYuzde = parsedJson.Data.AbuseConfidenceScore;
-
-            if (parsedJson.Data.TotalReports > 0)
-            {
-                if (await IsWhitelistedDomain(parsedJson.Data.Domain))
+                var tehlikeYuzde = parsedJson.Data.AbuseConfidenceScore;
+                Console.WriteLine(scanIp.IpAdresi + " için tehlike yüzde :" + tehlikeYuzde);
+                if (parsedJson.Data.TotalReports > 0)
                 {
-                    _logger.LogInformation($"Skipped adding {parsedJson.Data.Domain} to firewall rules as it's identified as a whitelisted domain.");
+                    if (await IsWhitelistedDomain(parsedJson.Data.Domain))
+                    {
+                        _logger.LogInformation($"Skipped adding {parsedJson.Data.Domain} to firewall rules as it's identified as a whitelisted domain.");
+                        if (!whiteListIps.Contains(scanIp.IpAdresi))
+                        {
+                            var newWhiteList = new WhiteList
+                            {
+                                IpAdresi = scanIp.IpAdresi,
+                                DangerLevel = 0,
+                                Date = DateTime.Now
+                            };
+
+                            await context.WhiteList.AddAsync(newWhiteList);
+                           
+                        }
+                        context.ScanIp.Remove(scanIp);
+                        await context.SaveChangesAsync();
+                        return;
+                    }
+                    else
+                    {
+                        if (!blackListIps.Contains(scanIp.IpAdresi))
+                        {
+                            await AddToFirewall(scanIp.IpAdresi, "Tehlike Oranı: %" + tehlikeYuzde, context);
+
+                            var newBlackList = new BlackList
+                            {
+                                IpAdresi = scanIp.IpAdresi,
+                                DangerLevel = (int)tehlikeYuzde,
+                                Date = DateTime.Now,
+                                DomainName = parsedJson.Data.Domain,
+                                Country = parsedJson.Data.CountryName
+                            };
+
+                            await context.BlackList.AddAsync(newBlackList);
+                          
+                        }
+                        context.ScanIp.Remove(scanIp);
+                        await context.SaveChangesAsync();
+                    }
+                }
+                else
+                {
                     if (!whiteListIps.Contains(scanIp.IpAdresi))
                     {
                         var newWhiteList = new WhiteList
@@ -396,56 +444,16 @@ namespace IpBlockerNetcore.Code
                             Date = DateTime.Now
                         };
 
-                        await _context.WhiteList.AddAsync(newWhiteList);
-                        _context.ScanIp.Remove(scanIp);
-                        await _context.SaveChangesAsync();
+                        await context.WhiteList.AddAsync(newWhiteList);
+                      
                     }
-                    return;
+                    context.ScanIp.Remove(scanIp);
+                    await context.SaveChangesAsync();
                 }
-                else
-                {
-                    if (!blackListIps.Contains(scanIp.IpAdresi))
-                    {
-                        await AddToFirewall(scanIp.IpAdresi, "Tehlike Oranı: %" + tehlikeYuzde);
-
-                        var newBlackList = new BlackList
-                        {
-                            IpAdresi = scanIp.IpAdresi,
-                            DangerLevel = (int)tehlikeYuzde,
-                            Date = DateTime.Now,
-                            DomainName = parsedJson.Data.Domain,
-                            Country = parsedJson.Data.CountryName
-                        };
-
-                        await _context.BlackList.AddAsync(newBlackList);
-                        _context.ScanIp.Remove(scanIp);
-                        await _context.SaveChangesAsync();
-                    }
-                }
-               
-            }
-            else
-            {
-                if (!whiteListIps.Contains(scanIp.IpAdresi))
-                {
-                    var newWhiteList = new WhiteList
-                    {
-                        IpAdresi = scanIp.IpAdresi,
-                        DangerLevel = 0,
-                        Date = DateTime.Now
-                    };
-
-                    await _context.WhiteList.AddAsync(newWhiteList);
-                    _context.ScanIp.Remove(scanIp);
-                    await _context.SaveChangesAsync();
-                }
-            }
             }
             catch (Exception e)
             {
-
-                _logger.LogCritical(DateTime.Now + " - " +
-                     e.Message+Environment.NewLine+e.StackTrace );
+                _logger.LogCritical(DateTime.Now + " - " + e.Message + Environment.NewLine + e.StackTrace);
             }
         }
     }
