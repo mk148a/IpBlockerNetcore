@@ -15,25 +15,25 @@ namespace IpBlockerNetcore.Models.Domain
         public int? IpVersion;
 
         [JsonProperty("isWhitelisted")]
-        public string IsWhitelisted;
+        public string? IsWhitelisted;
 
         [JsonProperty("abuseConfidenceScore")]
         public int? AbuseConfidenceScore;
 
         [JsonProperty("countryCode")]
-        public string CountryCode;
+        public string? CountryCode;
 
         [JsonProperty("countryName")]
-        public string CountryName;
+        public string? CountryName;
 
         [JsonProperty("usageType")]
-        public string UsageType;
+        public string? UsageType;
 
         [JsonProperty("isp")]
-        public string Isp;
+        public string? Isp;
 
         [JsonProperty("domain")]
-        public string Domain;
+        public string? Domain;
 
         [JsonProperty("hostnames")]
         public List<string> Hostnames;
@@ -48,7 +48,7 @@ namespace IpBlockerNetcore.Models.Domain
         public int? NumDistinctUsers;
 
         [JsonProperty("lastReportedAt")]
-        public string LastReportedAt;
+        public string? LastReportedAt;
     }
 
     public class AbuseIpDb

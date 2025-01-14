@@ -19,6 +19,9 @@ public class IpAddJob : IJob
     public async Task Execute(IJobExecutionContext context)
     {
         string result = await ShowActiveTcpConnections();
+        // Büyük veri işlemi tamamlandıktan sonra
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
         await Console.Out.WriteLineAsync("IpAddJob is executing. Result: " + result);
     }
 

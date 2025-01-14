@@ -30,6 +30,9 @@ namespace IpBlockerNetcore.Code
         public async Task Execute(IJobExecutionContext context)
         {
             string result = await GetFirewallTxtIpList();
+            // Büyük veri işlemi tamamlandıktan sonra
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             await Console.Out.WriteLineAsync("FirewallAddTxtJob is executing. Result: " + result);
         }
 
@@ -102,7 +105,7 @@ namespace IpBlockerNetcore.Code
                 bool dahaOnceEklendimi = rules.Any(x => x.RemoteAddresses.Any(addr => addr.ToString() == newIp.ToString()));
                 if (!dahaOnceEklendimi)
                 {
-                    var uygunKural = rules.FirstOrDefault(x => x.RemoteAddresses.Count() < 500);
+                    var uygunKural = rules.FirstOrDefault(x => x.RemoteAddresses.Count() < 1000);
                     if (uygunKural != null)
                     {
                         var remoteAddresses = uygunKural.RemoteAddresses.ToList();
